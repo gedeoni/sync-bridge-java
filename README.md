@@ -1,0 +1,101 @@
+Sync Bridge Spring (Java)
+
+Overview
+- Sync bridge API.
+- Uses H2 in-memory DB, Spring Data JPA, and validation.
+- Exposes the same endpoints and behavior under `/api/v1`.
+
+Endpoints
+- `GET /api/v1/healthz` — Health check with DB read/write checks.
+- `POST /api/v1/sync` — Sync payload for models: `customers|products|orders|employees`.
+- `GET /api/v1/sync/stats` — Aggregated SyncHistory counts.
+- `GET /api/v1/sync-history` — Paginated listing with optional `status`.
+- `GET /api/v1/sync-history/{id}` — Single sync history.
+- `POST /api/v1/sync-history/retry/{id}` — Retry failed sync -> pending_retry.
+- `DELETE /api/v1/sync-history/{id}` — Delete history record.
+
+Auth
+- Protected routes require `x-auth-token` header matching `app.auth-token` (see `application.yml`).
+- Health endpoint is public.
+
+**Sync Bridge Spring (Java)**
+
+**Overview**
+- **Purpose:** Spring Boot implementation of an API allowing data transfer between databases
+- **Stack:** Spring Boot, Spring Data JPA (Hibernate), H2 (default), Jackson, Micrometer, Logback (JSON encoder).
+
+**What's New / Improvements**
+- **DTO-first mapping:** Incoming snake_case JSON is mapped to strongly-typed DTOs (`src/main/java/com/syncbridge/dto/SyncDtos.java`) using `@JsonProperty` where needed.
+- **Centralized mapping:** `SyncMapper` converts DTOs to JPA entities (customers, products, orders, employees) with validation (e.g. order item amounts) in `src/main/java/com/syncbridge/mapper/SyncMapper.java`.
+- **Robust error handling:** `GlobalExceptionHandler` centralizes API errors, sanitizes DB constraint messages (avoids leaking SQL), and returns `409 Conflict` for unique-constraint violations with a concise field-level message.
+- **Observability:** Aspect-based instrumentation using `@Monitored` and `SyncAspect` to collect latency, throughput and error counters via Micrometer. Structured JSON logs are produced with `logback-spring.xml` and the Logstash encoder.
+- **Metrics endpoint:** Prometheus-compatible metrics available at `/actuator/prometheus` (via Micrometer Prometheus registry).
+- **Sync history:** All sync attempts are recorded in `SyncHistory` with statuses (`PENDING_RETRY`, `SUCCESSFUL`, `FAILED`, `INVALID`).
+
+**Quick Start**
+- **Prerequisites:** JDK 17+, Maven.
+- **Build:** `mvn -DskipTests package`
+- **Run (dev):** `mvn spring-boot:run`
+- **H2 console:** `http://localhost:3000/h2-console` (JDBC URL `jdbc:h2:mem:syncdb`)
+- **Actuator metrics:** `http://localhost:3000/actuator/prometheus`
+
+**Recommended build change (parameter names)**
+- To allow the `@Monitored(tags={"paramName"})` aspect to extract parameter names reliably, compile with parameter metadata. Add this to your `pom.xml` under `maven-compiler-plugin` configuration:
+
+```xml
+<configuration>
+	<compilerArgs>
+		<arg>-parameters</arg>
+	</compilerArgs>
+</configuration>
+```
+
+**Important Files**
+- **DTOs:** `src/main/java/com/syncbridge/dto/SyncDtos.java`
+- **Mapper:** `src/main/java/com/syncbridge/mapper/SyncMapper.java`
+- **Service:** `src/main/java/com/syncbridge/service/SyncService.java`
+- **Controller:** `src/main/java/com/syncbridge/controller/SyncController.java`
+- **Exception handling:** `src/main/java/com/syncbridge/exception/GlobalExceptionHandler.java`
+- **Observability:** `src/main/java/com/syncbridge/annotation/Monitored.java` and `src/main/java/com/syncbridge/aspect/SyncAspect.java`
+- **Logging config:** `src/main/resources/logback-spring.xml`
+
+**Available Endpoints**
+- **Health:** `GET /api/v1/healthz`
+- **Sync:** `POST /api/v1/sync` — payload: `{ "model": "customers|products|orders|employees", "data": [ ... ] }`
+- **Sync stats:** `GET /api/v1/sync/stats`
+- **Sync history:** `GET /api/v1/sync-history`, `GET /api/v1/sync-history/{id}`, `POST /api/v1/sync-history/retry/{id}`, `DELETE /api/v1/sync-history/{id}`
+
+**Example curl (create customer)**
+```bash
+cat <<'JSON' > /tmp/customer.json
+{
+	"model": "customers",
+	"data": [
+		{ "email": "testuser@example.com", "first_name": "Test", "last_name": "User", "default_currency": "USD" }
+	]
+}
+JSON
+
+curl -i -X POST http://localhost:3000/api/v1/sync \
+	-H "Content-Type: application/json" \
+	--data @/tmp/customer.json
+```
+
+**Error behavior**
+- **Unique constraint:** Attempts to insert a duplicate (e.g. customer email) result in `409 Conflict` with a sanitized message like `Duplicate entry: field 'EMAIL' already exists`.
+- **Internal errors:** Generic errors return `500 Internal Server Error`. If you see a `500` after adding `@Monitored`, see Troubleshooting below.
+
+**Troubleshooting**
+- **500 when using `@Monitored(tags = {"..."})`:**
+	- Cause: JVM may not retain parameter names at runtime by default, so the aspect's tag extraction can fail. Two fixes:
+		- Compile with `-parameters` (recommended) as shown above.
+		- Or avoid using `tags` by name and keep annotation without tags.
+- **Where to find logs:** Application logs are written in `logs/app.log` (configured via `logback-spring.xml`). Structured JSON logs include `requestId` for tracing.
+
+**Next steps / Suggestions**
+- Add integration tests for DTO→entity mapping and unique-constraint handling.
+- Optionally switch H2 to a persistent DB in `application.yml` for realistic testing.
+
+**License & Contributing**
+- Small, focused project: fork, change, and open PRs. Keep changes minimal and focused.
+
