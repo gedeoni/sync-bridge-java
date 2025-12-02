@@ -29,6 +29,7 @@ type Employee {
 }
 
 type Query {
+  hello: String!
   employees(offset: Int = 0, limit: Int = 10): [Employee!]!
   employee(id: Long!): Employee
   searchEmployees(search: String!, offset: Int = 0, limit: Int = 10): [Employee!]!
